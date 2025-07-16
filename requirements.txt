@@ -1,0 +1,4 @@
+yt-dlp>=2024.3.10
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+# Note: ffmpeg must be installed on your system for mp3 conversion 
