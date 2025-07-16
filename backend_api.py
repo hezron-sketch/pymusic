@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 from typing import List
 import yt_dlp
 import os
 import tempfile
 import re
+import random
+import time
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -31,11 +33,6 @@ class SearchResponse(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
 
-class DownloadResponse(BaseModel):
-    status: str
-    filename: str = None
-    error: str = None
-
 def search_youtube(query, max_results=5):
     ydl_opts = {
         'quiet': True,
@@ -43,6 +40,8 @@ def search_youtube(query, max_results=5):
         'default_search': 'ytsearch',
         'noplaylist': True,
         'extract_flat': True,
+        # Rotate user agents to avoid detection
+        'user_agent': get_random_user_agent(),
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         search_url = f"ytsearch{max_results}:{query}"
@@ -64,42 +63,76 @@ def sanitize_filename(name):
     """Remove invalid characters from filename"""
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
+def get_random_user_agent():
+    """Return a random user agent to avoid detection"""
+    agents = [
+        # Popular browsers
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15',
+        
+        # Mobile browsers
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Mobile/15E148 Safari/604.1',
+        'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+        
+        # Add more user agents as needed
+    ]
+    return random.choice(agents)
+
 @app.post("/download")
 async def download_endpoint(req: DownloadRequest):
     # Create temp directory
     temp_dir = tempfile.mkdtemp()
     
-    # YouTubeDL options for high quality audio
+    # YouTubeDL options with anti-detection measures
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-        'verbose': True,  # For debugging
         'noplaylist': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '320',  # Highest quality
+            'preferredquality': '320',
         }],
         'ffmpeg_location': '/usr/bin/ffmpeg',
         'audioformat': 'mp3',
         'keepvideo': False,
         'writethumbnail': False,
         'noprogress': True,
+        
+        # Anti-detection settings
+        'user_agent': get_random_user_agent(),
         'socket_timeout': 30,
         'retries': 10,
         'fragment_retries': 10,
-        'buffersize': 1024 * 1024 * 16,  # 16MB buffer
-        'http_chunk_size': 10485760,  # 10MB chunks
-        'extractor_args': {
-            'youtube': {
-                'player_skip': ['js', 'configs', 'webpage'],
-            }
-        },
-        'concurrent_fragment_downloads': 10,  # Parallel downloads
+        'ignoreerrors': True,
+        'no_check_certificate': True,
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+        'cookiefile': 'cookies.txt',  # Optional: Create this file if you have cookies
+        
+        # Throttle to appear more human-like
+        'throttledratelimit': 500000,  # 500 KB/s
+        'sleep_interval': random.randint(1, 5),
+        'max_sleep_interval': 8,
+        
+        # Browser simulation
+        'http_headers': {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
     }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Add random delay to simulate human behavior
+            time.sleep(random.uniform(0.5, 2.5))
+            
             info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
             mp3_filename = os.path.splitext(filename)[0] + '.mp3'
