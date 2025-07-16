@@ -1,11 +1,12 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from typing import List
 import yt_dlp
 import os
+import tempfile
+import re
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import tempfile
 
 app = FastAPI()
 
@@ -59,28 +60,42 @@ def search_endpoint(req: SearchRequest):
     results = search_youtube(req.query)
     return SearchResponse(results=results)
 
+def sanitize_filename(name):
+    """Remove invalid characters from filename"""
+    return re.sub(r'[\\/*?:"<>|]', "", name)
+
 @app.post("/download")
 async def download_endpoint(req: DownloadRequest):
-    # Create temp directory if it doesn't exist
-    temp_dir = os.path.join(tempfile.gettempdir(), "yt_downloads")
-    os.makedirs(temp_dir, exist_ok=True)
+    # Create temp directory
+    temp_dir = tempfile.mkdtemp()
     
+    # YouTubeDL options for high quality audio
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-        'quiet': False,  # Set to False for debugging
+        'verbose': True,  # For debugging
         'noplaylist': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '320',  # Highest quality
         }],
-        'ffmpeg_location': '/usr/bin/ffmpeg',  # Ensure ffmpeg is available
-        'extractaudio': True,
+        'ffmpeg_location': '/usr/bin/ffmpeg',
         'audioformat': 'mp3',
         'keepvideo': False,
         'writethumbnail': False,
         'noprogress': True,
+        'socket_timeout': 30,
+        'retries': 10,
+        'fragment_retries': 10,
+        'buffersize': 1024 * 1024 * 16,  # 16MB buffer
+        'http_chunk_size': 10485760,  # 10MB chunks
+        'extractor_args': {
+            'youtube': {
+                'player_skip': ['js', 'configs', 'webpage'],
+            }
+        },
+        'concurrent_fragment_downloads': 10,  # Parallel downloads
     }
     
     try:
@@ -91,28 +106,37 @@ async def download_endpoint(req: DownloadRequest):
             
             # Verify file size
             file_size = os.path.getsize(mp3_filename)
-            if file_size < 100 * 1024:  # Less than 100KB is suspicious
+            if file_size < 1024 * 1024:  # Less than 1MB is suspicious
                 raise Exception(f"File too small ({file_size} bytes), likely download failed")
             
-            # Read file and return as response
+            # Read file content
             with open(mp3_filename, 'rb') as f:
-                file_content = f.read()
+                content = f.read()
             
-            # Clean up
-            os.remove(mp3_filename)
+            # Get sanitized filename
+            title = info.get('title', 'audio')
+            filename = f"{sanitize_filename(title)}.mp3"
             
-            return {
-                "status": "success",
-                "filename": os.path.basename(mp3_filename),
-                "content": file_content,
-                "content_type": "audio/mpeg"
-            }
+            return Response(
+                content=content,
+                media_type='audio/mpeg',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Length': str(file_size)
+                }
+            )
             
     except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        return Response(
+            content=str(e),
+            status_code=500,
+            media_type='text/plain'
+        )
+    finally:
+        # Clean up temporary files
+        for file in os.listdir(temp_dir):
+            os.remove(os.path.join(temp_dir, file))
+        os.rmdir(temp_dir)
 
 if __name__ == "__main__":
     uvicorn.run(
