@@ -30,7 +30,12 @@ class DownloadRequest(BaseModel):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="https://pymusic-1.onrender.com")
+    uvicorn.run(
+        "backend_api:app",
+        host="0.0.0.0",  # Crucial for Render
+        port=int(os.environ.get("PORT", 8000)),  # Use Render's assigned port
+        reload=True if os.environ.get("DEV") == "1" else False
+    )
 
 class DownloadResponse(BaseModel):
     status: str
