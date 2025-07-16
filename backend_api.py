@@ -30,7 +30,7 @@ class DownloadRequest(BaseModel):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="https://pymusic-1.onrender.com")
 
 class DownloadResponse(BaseModel):
     status: str
@@ -84,5 +84,3 @@ def download_endpoint(req: DownloadRequest):
         return DownloadResponse(status="error", error=str(e)) 
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
