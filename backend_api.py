@@ -33,7 +33,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "backend_api:app",
         host="0.0.0.0",  # Crucial for Render
-        port=int(os.environ.get("PORT", 8000)),  # Use Render's assigned port
+        port=int(os.environ.get("PORT", 4000)),  # Use Render's assigned port
         reload=True if os.environ.get("DEV") == "1" else False
     )
 
