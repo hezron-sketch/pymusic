@@ -4,6 +4,8 @@ from typing import List
 import yt_dlp
 import os
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import tempfile
 
 app = FastAPI()
 
@@ -27,15 +29,6 @@ class SearchResponse(BaseModel):
 
 class DownloadRequest(BaseModel):
     url: str
-
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "backend_api:app",
-        host="0.0.0.0",  # Crucial for Render
-        port=int(os.environ.get("PORT", 4000)),  # Use Render's assigned port
-        reload=True if os.environ.get("DEV") == "1" else False
-    )
 
 class DownloadResponse(BaseModel):
     status: str
@@ -66,26 +59,65 @@ def search_endpoint(req: SearchRequest):
     results = search_youtube(req.query)
     return SearchResponse(results=results)
 
-@app.post("/download", response_model=DownloadResponse)
-def download_endpoint(req: DownloadRequest):
+@app.post("/download")
+async def download_endpoint(req: DownloadRequest):
+    # Create temp directory if it doesn't exist
+    temp_dir = os.path.join(tempfile.gettempdir(), "yt_downloads")
+    os.makedirs(temp_dir, exist_ok=True)
+    
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': os.path.join('.', '%(title)s.%(ext)s'),
-        'quiet': True,
+        'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+        'quiet': False,  # Set to False for debugging
         'noplaylist': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'ffmpeg_location': '/usr/bin/ffmpeg',  # Ensure ffmpeg is available
+        'extractaudio': True,
+        'audioformat': 'mp3',
+        'keepvideo': False,
+        'writethumbnail': False,
+        'noprogress': True,
     }
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(req.url, download=True)
             filename = ydl.prepare_filename(info)
             mp3_filename = os.path.splitext(filename)[0] + '.mp3'
-        return DownloadResponse(status="success", filename=os.path.basename(mp3_filename))
+            
+            # Verify file size
+            file_size = os.path.getsize(mp3_filename)
+            if file_size < 100 * 1024:  # Less than 100KB is suspicious
+                raise Exception(f"File too small ({file_size} bytes), likely download failed")
+            
+            # Read file and return as response
+            with open(mp3_filename, 'rb') as f:
+                file_content = f.read()
+            
+            # Clean up
+            os.remove(mp3_filename)
+            
+            return {
+                "status": "success",
+                "filename": os.path.basename(mp3_filename),
+                "content": file_content,
+                "content_type": "audio/mpeg"
+            }
+            
     except Exception as e:
-        return DownloadResponse(status="error", error=str(e)) 
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
-
+if __name__ == "__main__":
+    uvicorn.run(
+        "backend_api:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        reload=True if os.environ.get("DEV") == "1" else False
+    )
