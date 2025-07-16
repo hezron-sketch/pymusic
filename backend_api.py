@@ -82,3 +82,7 @@ def download_endpoint(req: DownloadRequest):
         return DownloadResponse(status="success", filename=os.path.basename(mp3_filename))
     except Exception as e:
         return DownloadResponse(status="error", error=str(e)) 
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
