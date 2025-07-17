@@ -7,6 +7,8 @@ import tempfile
 import re
 import random
 import time
+import base64
+import json
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -33,6 +35,17 @@ class SearchResponse(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
 
+# Get cookies from environment variable
+COOKIES_B64 = os.environ.get("YT_COOKIES_B64", "")
+COOKIES = []
+
+if COOKIES_B64:
+    try:
+        COOKIES = json.loads(base64.b64decode(COOKIES_B64).decode('utf-8'))
+        print("Loaded cookies from environment variable")
+    except:
+        print("Failed to decode cookies")
+
 def search_youtube(query, max_results=5):
     ydl_opts = {
         'quiet': True,
@@ -40,8 +53,8 @@ def search_youtube(query, max_results=5):
         'default_search': 'ytsearch',
         'noplaylist': True,
         'extract_flat': True,
-        # Rotate user agents to avoid detection
         'user_agent': get_random_user_agent(),
+        'cookiefile': 'cookies.txt' if COOKIES else None,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         search_url = f"ytsearch{max_results}:{query}"
@@ -75,8 +88,6 @@ def get_random_user_agent():
         # Mobile browsers
         'Mozilla/5.0 (iPhone; CPU iPhone OS 16_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Mobile/15E148 Safari/604.1',
         'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-        
-        # Add more user agents as needed
     ]
     return random.choice(agents)
 
@@ -84,6 +95,14 @@ def get_random_user_agent():
 async def download_endpoint(req: DownloadRequest):
     # Create temp directory
     temp_dir = tempfile.mkdtemp()
+    
+    # Create cookies file if we have cookies
+    cookies_path = None
+    if COOKIES:
+        cookies_path = os.path.join(temp_dir, "cookies.txt")
+        with open(cookies_path, "w") as f:
+            for cookie in COOKIES:
+                f.write(f"{cookie['name']}={cookie['value']}; Domain={cookie['domain']}; Path={cookie['path']}\n")
     
     # YouTubeDL options with anti-detection measures
     ydl_opts = {
@@ -110,7 +129,7 @@ async def download_endpoint(req: DownloadRequest):
         'no_check_certificate': True,
         'geo_bypass': True,
         'geo_bypass_country': 'US',
-        'cookiefile': 'cookies.txt',  # Optional: Create this file if you have cookies
+        'cookiefile': cookies_path,
         
         # Throttle to appear more human-like
         'throttledratelimit': 500000,  # 500 KB/s
@@ -168,8 +187,16 @@ async def download_endpoint(req: DownloadRequest):
     finally:
         # Clean up temporary files
         for file in os.listdir(temp_dir):
-            os.remove(os.path.join(temp_dir, file))
-        os.rmdir(temp_dir)
+            file_path = os.path.join(temp_dir, file)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                print(f"Error deleting {file_path}: {e}")
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
 
 if __name__ == "__main__":
     uvicorn.run(
